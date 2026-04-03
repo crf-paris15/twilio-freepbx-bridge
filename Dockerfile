@@ -1,14 +1,12 @@
 FROM python:3.14
 
-RUN useradd -ms /bin/bash user
-USER user
-WORKDIR /home/user
+WORKDIR /code
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt && rm requirements.txt
+COPY ./requirements.txt /code/requirements.txt
+RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
-COPY src .
+COPY ./app /code/app
 
 EXPOSE 8000
 
-ENTRYPOINT ["python", "main.py"]
+CMD ["fastapi", "run", "src/main.py", "--port", "8000"]
