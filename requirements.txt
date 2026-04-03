@@ -1,0 +1,3 @@
+fastapi==0.128.8
+twilio==9.10.4
+asterisk-ami==0.1.7
