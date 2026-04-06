@@ -1,6 +1,5 @@
 import asyncio
 import os
-import chardet
 
 from contextlib import asynccontextmanager
 
@@ -68,7 +67,7 @@ async def incoming_sms(request: Request, From: str = Form(...), Body: str = Form
     # Validate that the request is actually from Twilio
     form_ = await request.form()
     if not RequestValidator(TWILIO_TOKEN).validate(
-        uri = str(request.url),
+        uri = str(request.url).replace("http://", "https://"),  # Twilio sends the URL as https, but FastAPI sees it as http
         params = form_,
         signature = request.headers.get("X-Twilio-Signature", "")   
     ):
