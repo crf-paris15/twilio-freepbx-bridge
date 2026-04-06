@@ -31,7 +31,7 @@ jobs:
           script: |
             cd /var/docker/${{ inputs.site }}
             docker compose pull
-            docker compose down twilio-freepbx-bridge
+            docker compose down twilio-matrix-bridge
 
       - name: docker-compose up
         uses: appleboy/ssh-action@v1.2.5
@@ -42,4 +42,4 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             cd /var/docker/${{ inputs.site }}
-            docker compose up -d twilio-freepbx-bridge
+            docker compose up -d twilio-matrix-bridge

@@ -1,45 +1,125 @@
-from fastapi import FastAPI, Form
-from twilio.rest import Client
-from asterisk.ami import AMIClient, SimpleAction
+import asyncio
 import os
+import chardet
 
-app = FastAPI()
+from contextlib import asynccontextmanager
 
-# Configuration Twilio
+from fastapi import FastAPI, Form, Request, HTTPException, Response
+from twilio.rest import Client as TwilioClient
+from twilio.request_validator import RequestValidator
+from nio import AsyncClient as MatrixClient, MatrixRoom, RoomCreateError, RoomMessageText, RoomResolveAliasError, RoomSendError, RoomVisibility
 
+# Twilio configuration
 TWILIO_SID = os.getenv("TWILIO_SID")
 TWILIO_TOKEN = os.getenv("TWILIO_TOKEN")
 TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
-AMI_HOST = os.getenv("AMI_HOST")
-AMI_USER = os.getenv("AMI_USER")
-AMI_PASS = os.getenv("AMI_PASS")
+twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
 
-twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
+# Matrix configuration
+MATRIX_URI = os.getenv("MATRIX_URI")
+MATRIX_USER = os.getenv("MATRIX_USER")
+MATRIX_PASSWORD = os.getenv("MATRIX_PASSWORD")
 
-@app.post("/incoming-sms")
-async def incoming_sms(From: str = Form(...), Body: str = Form(...)):
-    """Webhook appelé par Twilio lors de la réception d'un SMS"""
-    client = AMIClient(address=AMI_HOST, port=5038)
-    client.login(username=AMI_USER, secret=AMI_PASS)
+MATRIX_TIMEOUT = 30000
+MATRIX_USERS_TO_INVITE = ["@pul:sms.crf.tools", "@dlus:sms.crf.tools", "@rlu:sms.crf.tools"]
 
-    # On forge le SIP MESSAGE pour l'extension 100 (exemple)
-    # Dans une version prod, on mapperait le numéro Twilio à une extension
-    action = SimpleAction(
-        'MessageSend',
-        To='pjsip:100',
-        From=f'SMS:{From}',
-        Body=Body
-    )
-    client.send_action(action)
-    client.logoff()
-    return {"status": "success"}
+# Global variable to hold the Matrix sync task
+matrix_sync_task = None
 
-@app.post("/outgoing-sms")
-async def outgoing_sms(to: str = Form(...), body: str = Form(...)):
-    """Appelé par Asterisk quand un softphone envoie un message"""
-    message = twilio_client.messages.create(
-        body=body,
-        from_=TWILIO_NUMBER,
-        to=to
-    )
-    return {"sid": message.sid}
+# Callback for handling incoming Matrix messages
+async def message_callback(room: MatrixRoom, event: RoomMessageText) -> None:
+    if not (event.sender == "SMS - Urgence" or event.sender == "@sms-urgence:sms.crf.tools"):
+        twilio_client.messages.create(
+            body = event.body,
+            from_ = TWILIO_NUMBER,
+            to = room.display_name
+        )
+
+        print(f"Sent message to {room.display_name} with body: {event.body}")
+
+# FastAPI lifespan event to manage Matrix client lifecycle
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global matrix_sync_task
+    
+    matrix_client = MatrixClient(MATRIX_URI, MATRIX_USER)
+    print(await matrix_client.login(MATRIX_PASSWORD))
+
+    await matrix_client.sync(timeout=30000, full_state=False)
+
+    matrix_client.add_event_callback(message_callback, RoomMessageText)
+
+    app.state.matrix_client = matrix_client
+    matrix_sync_task = asyncio.create_task(matrix_client.sync_forever(timeout = MATRIX_TIMEOUT))
+
+    yield
+
+    if matrix_sync_task:
+        matrix_sync_task.cancel()
+    await matrix_client.close()
+
+# Initialize FastAPI app with lifespan management
+app = FastAPI(lifespan = lifespan)
+
+@app.post("/")
+async def incoming_sms(request: Request, From: str = Form(...), Body: str = Form(...)):
+    """Webhook called by Twilio when an SMS is received"""
+
+    # Validate that the request is actually from Twilio
+    form_ = await request.form()
+    if not RequestValidator(TWILIO_TOKEN).validate(
+        uri = str(request.url),
+        params = form_,
+        signature = request.headers.get("X-Twilio-Signature", "")   
+    ):
+        raise HTTPException(status_code = 400, detail = "Error in Twilio Signature")
+
+    print(f"Received message from {From} with body: {Body}")
+    
+    # Retrieve the Matrix client from the application state
+    matrix_client = request.app.state.matrix_client
+
+    # Try to find an existing room for this sender
+    find_room_response = await matrix_client.room_resolve_alias("#" + From[1:] + ":sms.crf.tools")
+
+    # If it doesn't exist, create it and then send the message
+    if (type(find_room_response) == RoomResolveAliasError):
+        create_response = await matrix_client.room_create(
+            name = From,
+            alias = From[1:],
+            is_direct = True,
+            visibility = RoomVisibility.public,
+            invite = MATRIX_USERS_TO_INVITE
+        )
+
+        if type(create_response) == RoomCreateError:
+            print(f"Failed to create room: {create_response}")
+        else:
+            second_attempt_response = await matrix_client.room_send(
+                room_id = create_response.room_id,
+                message_type = "m.room.message",
+                content = {
+                    "msgtype": "m.text",
+                    "body": Body
+                }
+            )
+
+            if type(second_attempt_response) == RoomSendError:
+                print(f"Failed to send message after creating room: {second_attempt_response}")
+
+        
+    # If it does exist, just send the message
+    else:
+        message_sent_response = await matrix_client.room_send(
+            room_id = find_room_response.room_id,
+            message_type = "m.room.message",
+            content = {
+                "msgtype": "m.text",
+                "body": Body
+            }
+        )
+
+        if type(message_sent_response) == RoomSendError:
+            print(f"Failed to send message in existing room: {message_sent_response}")
+
+    return Response("<?xml version=\"1.0\" encoding=\"UTF-8\" ?><Response></Response>", media_type="application/xml")

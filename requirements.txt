@@ -2,3 +2,5 @@ fastapi[standard]==0.128.8
 twilio==9.10.4
 asterisk-ami==0.1.7
 python-multipart==0.0.22
+matrix-nio==0.25.2
+chardet==5.2.0
