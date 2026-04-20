@@ -50,11 +50,11 @@ async def message_callback(room: MatrixRoom, event: RoomMessageText) -> None:
         # Retrieve the Matrix client from the application state
         matrix_client = app.state.matrix_client
 
-        # Retrive the Matrix room id if it exists
-        db_cursor.execute("SELECT id FROM rooms WHERE phone = ? LIMIT 1", [event.body])
+        # Check if the conversation already exists
+        db_cursor.execute("SELECT COUNT(*) FROM rooms WHERE phone = ? LIMIT 1", [event.body])
+        count = db_cursor.fetchone()[0]
 
-        try:
-            room_id = db_cursor.fetchone()[0]
+        if count == 1:
             await matrix_client.room_send(
                 room_id = MATRIX_FIRST_SEND,
                 message_type = "m.room.message",
@@ -63,7 +63,7 @@ async def message_callback(room: MatrixRoom, event: RoomMessageText) -> None:
                     "body": "Erreur : La conversation existe déjà."
                 }
             )
-        except:
+        else:
             # Create room
             create_response = await matrix_client.room_create(
                 name = event.body,
@@ -158,18 +158,12 @@ async def incoming_sms(request: Request, From: str = Form(...), Body: str = Form
     matrix_client = request.app.state.matrix_client
 
     # Retrive the Matrix room id if it exists
-    db_cursor.execute("SELECT id FROM rooms WHERE phone = ? LIMIT 1", [From])
+    db_cursor.execute("SELECT COUNT(*) FROM rooms WHERE phone = ? LIMIT 1", [From])
+    count = db_cursor.fetchone()[0]
 
-    rooms_exists = True
     room_id = None
 
-    try:
-        room_id = db_cursor.fetchone()[0]
-    except:
-        rooms_exists = False
-
-    # If the room does not exist, we need to create it
-    if not rooms_exists:
+    if count == 0:
         name = From
 
         # If we have the phone number in Gaia, check who is the sender and use its name for the room
@@ -201,6 +195,9 @@ async def incoming_sms(request: Request, From: str = Form(...), Body: str = Form
             db_connection.commit()
 
             room_id = create_response.room_id
+    else:
+        db_cursor.execute("SELECT id FROM rooms WHERE phone = ? LIMIT 1", [From])
+        room_id = db_cursor.fetchone()[0]
 
     # We can now post the message in the room
     post_message_response = await matrix_client.room_send(
