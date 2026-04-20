@@ -64,9 +64,19 @@ async def message_callback(room: MatrixRoom, event: RoomMessageText) -> None:
                 }
             )
         else:
+            name = event.body
+
+            # If we have the phone number in Gaia, check who is the sender and use its name for the room
+            with open(CSV_PATH, mode = 'r') as csv_file:
+                contacts = csv.reader(csv_file, delimiter = ';')
+                for contact in contacts:
+
+                    if contact[2] == event.body[3:]:
+                        name = contact[1] + " " + contact[0]
+
             # Create room
             create_response = await matrix_client.room_create(
-                name = event.body,
+                name = name,
                 is_direct = True,
                 visibility = RoomVisibility.public,
                 invite = MATRIX_USERS_TO_INVITE,
