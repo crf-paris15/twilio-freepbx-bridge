@@ -85,7 +85,7 @@ async def message_callback(room: MatrixRoom, event: RoomMessageText) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global matrix_sync_task
-    
+
     matrix_client = MatrixClient(MATRIX_URI, MATRIX_USER)
     print(await matrix_client.login(MATRIX_PASSWORD))
 
@@ -133,16 +133,15 @@ async def incoming_sms(request: Request, From: str = Form(...), Body: str = Form
         room_id = db_cursor.fetchone()[0]
     except:
         rooms_exists = False
-    
+
     # If the room does not exist, we need to create it
     if not rooms_exists:
         name = From
 
         # If we have the phone number in Gaia, check who is the sender and use its name for the room
         with open(CSV_PATH, mode = 'r') as csv_file:
-            contacts = csv.reader(csv_file)
+            contacts = csv.reader(csv_file, delimiter = ';')
             for contact in contacts:
-                print(From[3:])
 
                 if contact[2] == From[3:]:
                     name = contact[1] + " " + contact[0]
