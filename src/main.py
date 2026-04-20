@@ -103,7 +103,7 @@ async def message_callback(room: MatrixRoom, event: RoomMessageText) -> None:
 
                 print(f"Room created")
 
-    if not (event.sender == "SMS - Urgence" or event.sender == "@sms-urgence:sms.crf.tools"):
+    elif not (event.sender == "SMS - Urgence" or event.sender == "@sms-urgence:sms.crf.tools"):
         db_cursor.execute("SELECT phone FROM rooms WHERE id = ? LIMIT 1", [room.room_id])
         phone = db_cursor.fetchone()[0]
 
